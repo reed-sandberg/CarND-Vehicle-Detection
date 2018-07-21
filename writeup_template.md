@@ -1,42 +1,24 @@
-## Writeup Template
-### You can use this file as a template for your writeup if you want to submit it as a markdown file, but feel free to use some other method and submit a pdf if you prefer.
+# Vehicle Detection Project
 
----
+This project combines computer vision and machine learning techniques to detect nearby vehicles from a video
+of a highway scene recorded from the driver's perspective.
 
-**Vehicle Detection Project**
+This report will focus on addressing each of the project's [rubric points](https://review.udacity.com/#!/rubrics/513/view)
 
-The goals / steps of this project are the following:
+## Summary
 
-* Perform a Histogram of Oriented Gradients (HOG) feature extraction on a labeled training set of images and train a classifier Linear SVM classifier
-* Optionally, you can also apply a color transform and append binned color features, as well as histograms of color, to your HOG feature vector. 
-* Note: for those first two steps don't forget to normalize your features and randomize a selection for training and testing.
-* Implement a sliding-window technique and use your trained classifier to search for vehicles in images.
-* Run your pipeline on a video stream (start with the test_video.mp4 and later implement on full project_video.mp4) and create a heat map of recurring detections frame by frame to reject outliers and follow detected vehicles.
-* Estimate a bounding box for vehicles detected.
+A classifier will be trained to determine if a given image is a car or not a car. This classifier is then used to scan areas of each
+frame of a driving video to predict where other cars (if any) are to be found.
 
-[//]: # (Image References)
-[image1]: ./examples/car_not_car.png
-[image2]: ./examples/HOG_example.jpg
-[image3]: ./examples/sliding_windows.jpg
-[image4]: ./examples/sliding_window.jpg
-[image5]: ./examples/bboxes_and_heat.png
-[image6]: ./examples/labels_map.png
-[image7]: ./examples/output_bboxes.png
-[video1]: ./project_video.mp4
+* Using a labeled training set of car/not car images, combine features from a histogram of oriented gradients (HOG),
+  binned color features, and a histogram of color values to train a linear SVM classifier
+* Implement a sliding-window technique and use the trained classifier to search for vehicles in an image or video frame
+* Run the search on each frame of a video stream and create a heat map of recurring detections frame by frame to reject
+  outliers and follow detected vehicles
+* Estimate a bounding box for vehicles detected
 
-## [Rubric](https://review.udacity.com/#!/rubrics/513/view) Points
-### Here I will consider the rubric points individually and describe how I addressed each point in my implementation.  
 
----
-### Writeup / README
-
-#### 1. Provide a Writeup / README that includes all the rubric points and how you addressed each one.  You can submit your writeup as markdown or pdf.  [Here](https://github.com/udacity/CarND-Vehicle-Detection/blob/master/writeup_template.md) is a template writeup for this project you can use as a guide and a starting point.  
-
-You're reading it!
-
-### Histogram of Oriented Gradients (HOG)
-
-#### 1. Explain how (and identify where in your code) you extracted HOG features from the training images.
+## Histogram of Oriented Gradients (HOG)
 
 The code for this step is contained in the first code cell of the IPython notebook (or in lines # through # of the file called `some_file.py`).  
 
