@@ -1034,7 +1034,6 @@ class VehicleCollisionZone(object):
         # HOG cells per block.
         self.cell_per_block = CELL_PER_BLOCK
 
-###at try without
         # Spatial binning dimensions.
         self.spatial_size = SPATIAL_SIZE
 

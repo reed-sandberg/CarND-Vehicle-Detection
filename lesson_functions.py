@@ -41,8 +41,7 @@ def bin_spatial(img, size=(32, 32)):
     channel values, and ravel() to create the feature vector as 1-D."""
     return cv2.resize(img, size).ravel()
 
-####at (0,255), but if it changes, also rerun training set and save new pickle
-def color_hist(img, nbins=32, bins_range=(0, 256)):
+def color_hist(img, nbins=32, bins_range=(0, 255)):
     """Determine a histogram of color values for each color channel and bundle them into a 1-D feature vector."""
 
     # Compute the histogram of each color channel separately.
