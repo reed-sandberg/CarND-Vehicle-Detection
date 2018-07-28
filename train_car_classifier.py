@@ -108,7 +108,7 @@ print('Using:', HOG_ORIENTATIONS, 'orientations', PIX_PER_CELL, 'pixels per cell
 print('Feature vector length:', len(X_train[0]))
 
 # Create the classifier using a linear SVC.
-svc = LinearSVC()
+svc = LinearSVC(C=0.01)
 
 # Train the classifier with timing.
 t=time.time()

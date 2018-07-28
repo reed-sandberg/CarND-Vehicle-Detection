@@ -111,7 +111,7 @@ The pipeline described above was applied to each window using the trained classi
 
 I adapted the pipeline to process a stream of image frames from the [project video](./project_video.mp4). Refer to
 the `lane_car_locate_pipeline()` function in `locate_lane_and_cars.py`, line 12 and the `locate_nearby_cars()` function
-in `zone.py`, line 1126.
+in `zone.py`, line 1244.
 
 The feature vectors extracted must align with the vectors used during training. However, I optimized the HOG feature
 extraction by applying HOG only once to the entire ROI range (for each range/sliding window size). I then ran the sliding
@@ -120,15 +120,26 @@ function in `zone.py`, line 143).
 
 The pipeline produced a noticeable number of false positives, so I employed the "heatmap" technique presented in the
 course. My method involves two generations of heatmap aggregations to expose the more persistent
-vehicle matching areas over a history of several frames (refer to `zone.py` lines 1132-1137).
+vehicle matching areas over a history of several frames (refer to `zone.py` lines 1250-1280).
 Generation 1 is a heatmap of vehicle matching windows aggregated for a single frame.
 Generation 2 is an aggregation of generation 1 heatmaps over several frames.
 
 To create a heatmap, the `represent_heatmap()` function (`zone.py` line 123) adds a unit value to a blank image array for the area inside
 every matching window. The heatmap is thresholded to reduce noise and then `scipy.ndimage.measurements.label()` was used
 to identify individual blobs in the heatmap.
-Finally, any adjacent/bordering blobs from the generation 2 heatmap were merged (`merge_bordering_areas()` of `zone.py` line 1074) and
+Any adjacent/bordering blobs from the generation 2 heatmap were merged (`merge_bordering_areas()` of `zone.py` line 1109) and
 ultimately a vehicle was presumed to exist at that location.
+
+Generation 2 heatmap vehicle positions were then matched to a history of established vehicle positions. If matched, the history
+of positions of that vehicle was used to smooth the boundary coordinates (`smooth_vehicle_boundaries()` function
+from `zone.py` line 1170).
+
+Finally, an attempt was made to match any remaining established vehicle positions to generation 1 positions. So those
+vehicle positions from the history buffer that were not matched to generation 2 positions were given a second chance
+to survive. The reasoning here is that if an area is known to contain a vehicle, less criteria is needed to confirm
+the vehicle's position in subsequent frames. Even if there is no generation 2 or 1 match, the vehicle position from
+the history buffer will continue to survive according to a configurable decay rate (`propagate_vehicle_history()` function
+from `zone.py` line 1217).
 
 #### Example frame with generation 1 heatmap and thresholded results:
 
@@ -140,10 +151,11 @@ ultimately a vehicle was presumed to exist at that location.
 
 ### Final result
 
-The heatmap thresholds for each generation were tuned empirically for this particular project video (`zone.py` lines 1046-1053).
+The heatmap thresholds for each generation, and history buffer sizes were tuned empirically for this particular project
+video (`zone.py` lines 1069-1082).
 
 At last, I combined this vehicle detection pipeline with the advanced lane finding pipeline from the previous project
-(`LaneBoundaryZone` class from `zone.py` line 251).
+(`LaneBoundaryZone` class from `zone.py` line 274).
 
 Result:
 [output_videos/project_video_pipeline.mp4](./output_videos/project_video_pipeline.mp4)
@@ -158,10 +170,6 @@ I used a heatmap technique to aggregate signals over several frames and to reduc
 My impression is that the SVM classifier is a good balance of accuracy and speed, since many windows must be analyzed for each frame
 of a video, and processing time can add up quickly. That said, the classifier seemed to detect the black car better than the
 white car and there were significant false positives, especially around the guard rails and bright yellow lane lines.
-I'd like to spend more time using the frame history to reduce noise. I also might train the classifier with a larger set,
-spend more time tweaking the parameters
-and experiment with other classifiers and their adjustable parameters. I might also use blob size to filter
-false positives.
 
 I don't consider the pipeline I've developed here to be particularly robust, and would have to make significant
 improvements before ever considering it for practical use. I might instead start

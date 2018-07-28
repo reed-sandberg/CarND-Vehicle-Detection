@@ -248,6 +248,29 @@ def extract_labeled_areas(img, labels, draw=False):
         bboxes.append(bbox)
     return img, bboxes
 
+def agg_overlapping_areas(target_area, match_areas):
+    """Return any areas from match_areas that overlap with target_area, multiple overlapping areas will be merged into
+    one."""
+    agg_area = None
+    for match_area in match_areas:
+        if areas_overlap(target_area, match_area):
+            if agg_area is None:
+                agg_area = match_area
+            else:
+                agg_area = merge_areas(agg_area, match_area)
+    return agg_area
+
+def map_area_sets(from_set, to_set):
+    """Map any area from from_set (set) to any overlapping areas from to_set. If an area has no match, use as-is."""
+    mapped_areas = []
+    for from_area in from_set:
+        to_area_match = agg_overlapping_areas(from_area, to_set)
+        if to_area_match is None:
+            mapped_areas.append(from_area)
+        else:
+            mapped_areas.append(to_area_match)
+    return mapped_areas
+
 class LaneBoundaryZone(object):
     """Identify the current path of travel."""
 
@@ -1045,24 +1068,36 @@ class VehicleCollisionZone(object):
 
         # Thresholds of heatmaps generated from areas of high probability to contain a vehicle.
         # Generation 1 threshold.
-        self.heatmap_threshold_gen1 = 2
+        self.heatmap_threshold_gen1 = 3
         # Generation 2 threshold.
         self.heatmap_threshold_gen2 = 15
 
-        # Size of history buffer to store vehicle detection tracking history.
+        # Heatmap threshold to amplify clustered match areas.
+        self.amplified_heatmap_threshold = 1
+
+        # Size of history buffer to store vehicle generation 2 matches.
         self.vehicle_matches_hist_size = 50
+
+        # Size of history buffer to store vehicle tracking positions.
+        self.vehicle_tracking_hist_size = 20
 
         # Initialize history buffers for averaging/smoothing.
         self.vehicle_matches_hist = deque([None for i in range(self.vehicle_matches_hist_size)],
                                           self.vehicle_matches_hist_size)
 
         # Overlap margin allowed for two adjacent areas to be considered the same object (in pixels).
-        self.overlap_margin = 25
+        self.overlap_margin = 20
  
         # Load pickled classifier and training params.
         svc_training_params = pickle.load(open('svc_trained.p', 'rb'))
         self.svc = svc_training_params["svc"]
         self.X_scaler = svc_training_params["scaler"]
+
+        # A list of vehicles, each vehicle is represented as a history of its positions.
+        self.vehicles_hist = []
+
+        # How many of the most recent positions/areas of a vehicle will be used to smooth the current position.
+        self.vehicle_area_ave_sample_cnt = 13
 
     def adjacent_areas(self, area_51, area_52):
         """Return true if area_51 and area_52 are close enough to be considered part of the same object, false
@@ -1114,14 +1149,97 @@ class VehicleCollisionZone(object):
 
         # Check the mid-to-horizon area of each frame with sliding windows of a smaller scale.
         ystart = 400
-        ystop = 530
-        scale = 1.5
+        ystop = 500
+        scale = 1.125
 
         vehicle_match_areas.extend(match_vehicle_areas(img, ystart, ystop, scale, self.svc, self.X_scaler,
                                                        self.hog_orientations, self.pix_per_cell, self.cell_per_block,
                                                        self.spatial_size, self.hist_bins, self.cells_per_step,
                                                        self.hog_cspace))
         return vehicle_match_areas
+
+    def average_areas(self, areas):
+        """Return an average of the positions and dimensions of areas according to the configured sample count."""
+        usable_areas = [area for area in areas if area is not None][-self.vehicle_area_ave_sample_cnt:]
+        ave_width = int(np.median([area[1][0] - area[0][0] for area in usable_areas]))
+        ave_height = int(np.median([area[1][1] - area[0][1] for area in usable_areas]))
+        ave_start_x = int(np.median([area[0][0] for area in usable_areas]))
+        ave_start_y = int(np.median([area[0][1] for area in usable_areas]))
+        return (ave_start_x,ave_start_y), (ave_start_x+ave_width,ave_start_y+ave_height)
+
+    def smooth_vehicle_boundaries(self, current_vehicles, vehicles_hist):
+        """Match all current_vehicles found in this frame with the history of vehicles (vehicles_hist) and their
+        positions, and use the history (if found) to find an average of positions to smooth the boundary position from
+        frame to frame."""
+        current_vehicles_ave = []
+
+        # Iterate vehicles for this frame.
+        for current_vehicle in current_vehicles:
+            found_hist = False
+
+            # Iterate the history of vehicles found.
+            for hist_idx, vehicle_hist in enumerate(vehicles_hist):
+                vehicle = None
+                for vehicle in vehicle_hist:
+                    if vehicle is not None:
+                        break
+                if vehicle is None:
+                    # Age out vehicles that are not seen again after some time.
+                    del vehicles_hist[hist_idx]
+                else:
+                    # If a match is found, calculate an average position and append to the history.
+                    if areas_overlap(current_vehicle, vehicle):
+                        vehicle_hist.append(current_vehicle)
+                        ave_vehicle_area = self.average_areas(vehicle_hist)
+
+                        # Prevent current frame vehicle areas from overlapping.
+                        has_existing_overlap = False
+                        for current_vehicle_ave in current_vehicles_ave:
+                            if areas_overlap(ave_vehicle_area, current_vehicle_ave):
+                                has_existing_overlap = True
+                                break
+
+                        if not has_existing_overlap:
+                            current_vehicles_ave.append(self.average_areas(vehicle_hist))
+                            self.vehicles_hist.append(vehicle_hist)
+                        found_hist = True
+                        del vehicles_hist[hist_idx]
+                        break
+            if not found_hist:
+                # If no matches were found within the history, create a new vehicle history array.
+                new_hist = deque([None for i in range(self.vehicle_tracking_hist_size)],
+                                 self.vehicle_tracking_hist_size)
+                new_hist.append(current_vehicle)
+                current_vehicles_ave.append(current_vehicle)
+                self.vehicles_hist.append(new_hist)
+        return current_vehicles_ave
+
+    def propagate_vehicle_history(self, vehicles_hist, gen1_amp, current_vehicles_ave):
+        """For any vehicles in the history that were not matched with current vehicles, make a second match attempt
+        with gen1 matches and propagate if found. Any established vehicle positions need less stringent qualifications
+        to be considered a vehicle."""
+        
+        # Iterate those vehicles that were not matched with gen 2 positions for this frame.
+        for unused_vehicle_hist in vehicles_hist:
+            unused_vehicle_pos = None
+            for unused_vehicle_pos in unused_vehicle_hist:
+                if unused_vehicle_pos is not None:
+                    break
+            # Find the most recent position in the history of this vehicle tracking positions.
+            if unused_vehicle_pos is not None:
+                # Join this history vehicle position with gen 1 positions.
+                gen1_match = agg_overlapping_areas(unused_vehicle_pos, gen1_amp)
+                if gen1_match is None:
+                    # If there's no match, append None to the history, but consider this as a current vehicle if there
+                    # is sufficient history remaining.
+                    current_vehicles_ave.append(self.average_areas(unused_vehicle_hist))
+                    unused_vehicle_hist.append(None)
+                else:
+                    # If there is a match, propagate this history with the gen 1 position.
+                    unused_vehicle_hist.append(gen1_match)
+                    current_vehicles_ave.append(self.average_areas(unused_vehicle_hist))
+
+                self.vehicles_hist.append(unused_vehicle_hist)
 
     def locate_nearby_cars(self, img):
         """Entry point for detecting nearby cars."""
@@ -1132,6 +1250,7 @@ class VehicleCollisionZone(object):
         # Extract the first generation (short-term) areas of the frame with a minimum amount of positive matching
         # activity from the classifier.
         heatmap_gen1, vehicle_feature_matches = represent_heatmap(img, vehicle_match_areas, self.heatmap_threshold_gen1)
+        _, gen1_amp = represent_heatmap(img, vehicle_match_areas, self.amplified_heatmap_threshold)
 
         # Add the matching areas of this frame to a history buffer.
         self.vehicle_matches_hist.append(vehicle_feature_matches)
@@ -1146,4 +1265,18 @@ class VehicleCollisionZone(object):
 
         # Merge persistent matching areas that overlap or border each other into a single area.
         persistent_matches_merged = self.merge_bordering_areas(persistent_matches)
-        return persistent_matches_merged
+
+        # Match areas from persistent_matches_merged onto gen1_amp to represent vehicles in their current location.
+        current_vehicles = map_area_sets(persistent_matches_merged, gen1_amp)
+
+        # Rebuild the vehicle history list based on matching the currently identified vehicles with the history.
+        vehicles_hist = self.vehicles_hist
+        self.vehicles_hist = []
+
+        # Smooth the vehicle position boundaries based on the history of positions (if any) of each vehicle.
+        current_vehicles_ave = self.smooth_vehicle_boundaries(current_vehicles, vehicles_hist)
+
+        # Use gen 1 matches to propagate established vehicle positions.
+        self.propagate_vehicle_history(vehicles_hist, gen1_amp, current_vehicles_ave)
+
+        return current_vehicles_ave
